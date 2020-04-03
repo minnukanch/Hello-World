@@ -1,0 +1,137 @@
+import com.amazon.arkkannadi.constant.Constants;
+import com.amazon.kannadi.TerminalException;
+import com.amazon.kannadi.aspects.KannadiException;
+import com.amazonaws.AmazonClientException;
+import com.amazonaws.services.s3.AmazonS3Client;
+import com.amazonaws.services.s3.model.CreateBucketRequest;
+import com.amazonaws.services.s3.model.DeleteObjectRequest;
+import com.amazonaws.services.s3.model.GetBucketLocationRequest;
+import com.amazonaws.services.s3.model.GetObjectRequest;
+import com.amazonaws.services.s3.model.ObjectListing;
+import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.PutObjectRequest;
+import com.amazonaws.services.s3.model.S3Object;
+import com.amazonaws.services.s3.model.S3ObjectSummary;
+import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Component;
+
+import javax.inject.Inject;
+import java.io.InputStream;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+public class S3Dao {
+
+    private AmazonS3Client s3Client;
+
+    public S3Dao(@Qualifier(Constants.SAOConstants.S3_CLIENT) AmazonS3Client s3Client) {
+        s3Client = AmazonS3ClientBuilder
+            .standard()
+            .withCredentials(new AWSStaticCredentialsProvider(credentials))
+            .withRegion(Regions.US_EAST_2)
+            .build();
+    }
+
+    /**
+     * Puts the given Inputstream into the configured bucket
+     * stored against the given key.
+     *
+     * @param key
+     * @param source
+     * @param length
+     */
+    public void put(final String bucket, final String key, final InputStream source, final long length) {
+
+        ObjectMetadata metaData = new ObjectMetadata();
+        metaData.setContentLength(length);
+
+        PutObjectRequest putRequest = new PutObjectRequest(bucket, key, source, metaData);
+
+        log.debug("S3Put: bucket=" + bucket + "key=" + key);
+
+        s3Client.putObject(putRequest);
+    }
+
+    /**
+     * Retrieves the object with the given key from the currently
+     * configured S3 bucket as an InputStream.
+     *
+     * @param key
+     * @return InputStream
+     */
+    public InputStream get(final String bucket, final String key) {
+
+        GetObjectRequest objReq = new GetObjectRequest(bucket, key);
+
+        log.debug("S3Get: bucket=" + bucket + "key=" + key);
+
+        S3Object s3Obj = s3Client.getObject(objReq);
+        InputStream resultStream = s3Obj.getObjectContent();
+        return resultStream;
+    }
+
+    /**
+     * Deletes the object in the currently configured bucket with
+     * the given key
+     *
+     * @param key
+     */
+    public void delete(final String bucket, final String key) {
+
+        DeleteObjectRequest deleteObjectRequest = new DeleteObjectRequest(bucket, key);
+        s3Client.deleteObject(deleteObjectRequest);
+    }
+
+    /**
+     * Returns the list of keys in the currently configured bucket with
+     * the given prefix
+     *
+     * @param prefix
+     * @return Set<String>
+     */
+    public Set<String> listObjects(final String bucket, final String prefix) {
+
+        Set<String> result = new HashSet<String>();
+
+        ObjectListing oL = s3Client.listObjects(bucket, prefix);
+
+        boolean finished = false;
+        do {
+            List<S3ObjectSummary> oS = oL.getObjectSummaries();
+            for (S3ObjectSummary key : oS) {
+                result.add(key.getKey());
+            }
+            if (oL.isTruncated()) {
+                oL = s3Client.listNextBatchOfObjects(oL);
+            } else {
+                finished = true;
+            }
+        } while (!finished);
+
+        return result;
+    }
+
+    /**
+     * Tries to create s3 bucket with endpoint as specified by client(if not present default endpoint is used), if bucket does not already exist
+     *
+     */
+    public void createBucket(final String bucket){
+        try {
+            if((s3Client.doesBucketExist(bucket)))
+            {
+                log.debug("bucket location = " + s3Client.getBucketLocation(
+                        new GetBucketLocationRequest(bucket)));
+                return;
+            }
+
+            s3Client.createBucket(new CreateBucketRequest(bucket));
+
+        } catch (AmazonClientException e) {
+            log.error("Unable to check for or create S3 bucket " + bucket, e);
+        }
+    }
+
+}
